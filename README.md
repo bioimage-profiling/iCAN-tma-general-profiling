@@ -1,2 +1,2 @@
-# iCAN-TMA-general-prof
+# iCAN-tma-general-profiling
 iCAN TMA general profiling code
