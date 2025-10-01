@@ -1,5 +1,5 @@
 # iCAN-tma-general-profiling
-Code used for analyses of multiplexed immunofluorescence microscopy images of tissue microarrays in the [iCAN Digital Precision Cancer Medicine Flagship Project] (https://ican.fi/flagship-project/).
+Code used for analyses of multiplexed immunofluorescence microscopy images of tissue microarrays in the [iCAN Digital Precision Cancer Medicine Flagship Project](https://ican.fi/flagship-project/).
 
 The main script is run_mIF_workflow.py that is called with one argument which is the settings.ini file. The script performs following tasks (if enabled in the settings file):
 1. Registration of different cycles using the DAPI channel.
