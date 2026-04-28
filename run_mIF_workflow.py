@@ -23,27 +23,55 @@ import scipy.stats
 #from visualization import merged_thumbnails
 
 
-def pre_analysis(df_feat, posthresh, featpat='Intensity_mean_'):
-    basecols = ['Panel','Slide','ROI','ID','Location_X','Location_Y','Size']
+def pre_analysis(df_feat, basecols, posthresh, featpat='Intensity_mean_'):
     ratiocols = [x for x in df_feat.columns if featpat in x]
     clscols = []
     for rc in ratiocols:
         marker = rc.split(featpat)[1]
         # Do not process nuclei channel
         if 'Nuclei' not in marker:
-            df_feat[marker+'+'] = (df_feat[rc] >= posthresh[marker]).astype(np.uint8)
+            df_feat[marker+'+'] = (df_feat[rc] >= posthresh[marker])
             clscols.append(marker+'+')
     df_cls = df_feat[basecols+clscols]
     return df_cls
 
-def CAFpanel_analysis(df_cls):
+def CAFpanel_analysis_v2(df_cls):
+    markers = ['Epithelial+','PDGFRbeta+','FAP+','pSTAT3+','aSMA+','Collagen I+']
+    # Check marker combinations
+
+    single_markers = df_cls[markers]
+    comb = []
+    for i in range(1,len(markers)):
+        comb = comb+list(map(list,itertools.combinations(markers[1:], i)))
+
+    comb_pos = np.zeros((single_markers.shape[0],len(comb)), dtype=bool)
+    # Name columns
+    comb_cols = []
+    for row in comb:
+        comb_str = 'Epithelial-' + "".join(row)
+        comb_cols.append(comb_str)
+
+    df_caf = pd.DataFrame(columns=comb_cols, data=comb_pos, index=df_cls.index)
+    for c in comb:
+        df_caf.loc[:,"Epithelial-"+"".join(c)] = np.logical_and.reduce([~single_markers['Epithelial+'].values,np.logical_and.reduce(single_markers[c],axis=1)])
+
+    df_class = pd.concat([df_cls, df_caf], axis=1)
+    # Add specific epi+ classes
+    df_class['Epithelial+aSMA+'] = (single_markers['Epithelial+'] & single_markers['aSMA+'])
+    df_class['Epithelial+pSTAT3+'] = (single_markers['Epithelial+'] & single_markers['pSTAT3+'])
+    df_class['Epithelial+aSMA+pSTAT3+'] = (single_markers['Epithelial+'] & single_markers['aSMA+'] & single_markers['pSTAT3+'])
+    df_class['Other+'] = (~single_markers['Epithelial+'] & ~single_markers['PDGFRbeta+'] & ~single_markers['FAP+'] & ~single_markers['pSTAT3+'] & ~single_markers['aSMA+'] & ~single_markers['Collagen I+'])
+    
+    return df_class
+
+def CAFpanel_analysis_v1(df_cls):
     markers = ['PDGFRbeta+','FAP+','pSTAT3+','aSMA+','Collagen I+','Epithelial+']
     # Check marker combinations
     single_markers = df_cls[markers]
     comb = list(map(list,itertools.product([0,1], repeat=len(markers))))
-    comb_pos = np.zeros((single_markers.shape[0],len(comb)), dtype=np.uint8)
+    comb_pos = np.zeros((single_markers.shape[0],len(comb)), dtype=bool)
     for i in single_markers.index:
-        comb_pos[i,comb.index(single_markers.loc[i,:].to_list())] = 1
+        comb_pos[i,comb.index(single_markers.loc[i,:].to_list())] = True
 
     # Name columns
     comb_cols = []
@@ -60,6 +88,61 @@ def CAFpanel_analysis(df_cls):
     df_class = pd.concat([df_cls, df_comb], axis=1)
     
     return df_class
+
+def CAFpanel_analysis(df_cls, version=2):
+    if version==2:
+        return CAFpanel_analysis_v2(df_cls)
+    elif version==1:
+        return CAFpanel_analysis_v1(df_cls)
+    return df_cls
+
+def classify_TMEpanel_marker_multi_v2(row):
+    if not row['CD45+'] and not row['HLA-DR+'] and row['CD68+'] and row['CD56+'] and row['CD31+']: # autofluorescent
+        return 'RBC+'
+    elif row['CD20+'] and row['CD45+']: # B-cell
+        return 'CD20+CD45+'
+    elif row['CD3+'] and not row['CD56+'] and row['CD45+']: # T-cell
+        return 'CD3+CD56-CD45+'
+    elif row['CD68+'] and row['HLA-DR+'] and row['CD45+']: # Macrophage HLA+
+        return 'CD68+HLA-DR+CD45+'
+    elif row['CD68+'] and not row['HLA-DR+'] and row['CD45+']: # Macrophage HLA-
+        return 'CD68+HLA-DR-CD45+'
+    elif row['CD11b+'] and row['CD45+'] and row['HLA-DR+']: # myeloid1 (non-macrophage)
+        return 'CD11b+HLA-DR+CD45+'
+    elif row['CD11b+'] and row['CD45+'] and not row['HLA-DR+']: # myeloid2 (non-macrophage)
+        return 'CD11b+HLA-DR-CD45+'
+    elif row['CD45+'] and row['HLA-DR+'] and not row['CD3+'] and not row['CD20+'] and not row['CD11b+']: # myeloid3 (non-macrophage)
+        return 'CD45+CD3-CD20-CD11b-HLA-DR+'
+    elif row['CD45+'] and not row['HLA-DR+'] and not row['CD3+'] and not row['CD20+'] and not row['CD11b+']: # myeloid4 (non-macrophage)
+        return 'CD45+CD3-CD20-CD11b-HLA-DR-'
+    elif row['Epithelial+'] and row['HLA-DR+'] and row['CD56+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
+        return 'Epithelial+HLA-DR+CD56+CD45-CD3-CD20-'
+    elif row['Epithelial+'] and row['CD56+'] and not row['HLA-DR+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
+        return 'Epithelial+HLA-DR-CD56+CD45-CD3-CD20-'
+    elif row['Epithelial+'] and row['HLA-DR+'] and not row['CD56+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
+        return 'Epithelial+HLA-DR+CD56-CD45-CD3-CD20-'
+    elif row['Epithelial+'] and not row['HLA-DR+'] and not row['CD56+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
+        return 'Epithelial+HLA-DR-CD56-CD45-CD3-CD20-'
+    elif row['CD3+'] and row['CD56+'] and row['CD45+']: # NKT-cell
+        return 'CD3+CD56+CD45+'
+    elif row['CD56+'] and not row['CD3+'] and row['CD45+']: # NK cell
+        return 'CD3-CD56+CD45+'
+    elif not row['Epithelial+'] and row['CD31+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
+        return 'Epithelial-CD31+CD45-CD3-CD20-'
+    elif not row['Epithelial+'] and row['PDGFRbeta+'] and row['CD56+'] and row['HLA-DR+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
+        return 'Epithelial-PDGFRbeta+CD56+HLA-DR+CD45-CD3-CD20-'
+    elif not row['Epithelial+'] and row['PDGFRbeta+'] and row['CD56+'] and not row['HLA-DR+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
+        return 'Epithelial-PDGFRbeta+CD56+HLA-DR-CD45-CD3-CD20-'
+    elif not row['Epithelial+'] and row['PDGFRbeta+'] and not row['CD56+'] and row['HLA-DR+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
+        return 'Epithelial-PDGFRbeta+CD56-HLA-DR+CD45-CD3-CD20-'
+    elif not row['Epithelial+'] and row['PDGFRbeta+'] and not row['CD56+'] and not row['HLA-DR+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
+        return 'Epithelial-PDGFRbeta+CD56-HLA-DR-CD45-CD3-CD20-'
+    elif not row['Epithelial+'] and row['CD56+'] and not row['CD3+'] and not row['CD20+'] and not row['CD45+']:
+        return 'Epithelial-CD56+CD45-CD3-CD20-'
+    elif row['CD45+']:
+        return 'Other+CD45+'
+    else:
+        return 'Other+CD45-'
 
 def classify_TMEpanel_marker_multi(row):
     if row['CD20+'] and row['CD45+']:
@@ -95,7 +178,23 @@ def classify_TMEpanel_marker_multi(row):
     else:
         return 'Negative/Other'
 
-def TMEpanel_analysis(df_cls):
+def TMEpanel_analysis_v2(df_cls):
+    celltypes = ['RBC+','CD20+CD45+','CD68+HLA-DR+CD45+','CD68+HLA-DR-CD45+','CD3+CD56+CD45+','CD3+CD56-CD45+','CD3-CD56+CD45+','CD11b+HLA-DR+CD45+','CD11b+HLA-DR-CD45+','CD45+CD3-CD20-CD11b-HLA-DR+','CD45+CD3-CD20-CD11b-HLA-DR-','Other+CD45+','Epithelial+HLA-DR+CD56+CD45-CD3-CD20-','Epithelial+HLA-DR-CD56+CD45-CD3-CD20-','Epithelial+HLA-DR+CD56-CD45-CD3-CD20-','Epithelial+HLA-DR-CD56-CD45-CD3-CD20-','Epithelial-CD31+CD45-CD3-CD20-','Epithelial-PDGFRbeta+CD56+HLA-DR+CD45-CD3-CD20-','Epithelial-PDGFRbeta+CD56+HLA-DR-CD45-CD3-CD20-','Epithelial-PDGFRbeta+CD56-HLA-DR+CD45-CD3-CD20-','Epithelial-PDGFRbeta+CD56-HLA-DR-CD45-CD3-CD20-','Epithelial-CD56+CD45-CD3-CD20-','Other+CD45-']
+
+    df_class = pd.DataFrame(columns=celltypes, data=np.zeros((df_cls.shape[0],len(celltypes)),dtype=bool), index=df_cls.index)
+    for i,row in df_cls.iterrows():
+        df_class.loc[i,classify_TMEpanel_marker_multi_v2(row)] = True
+
+    # Add derived single marker positivity
+    markers = ['CD68+','CD3+','CD56+','CD11b+','PDGFRbeta+','CD20+','CD31+','CD45+','HLA-DR+','Epithelial+']
+    for marker in markers:
+        cols = [x for x in df_class.columns if marker in x]
+        df_class['der'+marker] = df_class[cols].astype(np.uint8).sum(axis=1) >= 1
+
+    df_class = pd.concat([df_cls, df_class], axis=1)
+    return df_class
+
+def TMEpanel_analysis_v1(df_cls):
     celltypes = ['CD20+CD45+','CD3+CD56+CD45+','CD3+CD56-CD45+','CD3-CD56+CD45+','CD11b+HLA-DR+CD45+','CD11b+HLA-DR-CD45+','CD45+CD3-CD20-CD11b-','HLA-DR+CD45+','Epithelial+HLA-DR+CD56+CD45-','Epithelial+HLA-DR-CD56+CD45-','Epithelial+HLA-DR+CD56-CD45-','PDGFRbeta+CD56+HLA-DR+CD45-','PDGFRbeta+CD56+HLA-DR-CD45-','PDGFRbeta+CD56-HLA-DR+CD45-','CD56+CD3-CD45-','Negative/Other']
 
     df_class = pd.DataFrame(columns=celltypes, data=np.zeros((df_cls.shape[0],len(celltypes)),dtype=np.uint8), index=df_cls.index)
@@ -105,7 +204,76 @@ def TMEpanel_analysis(df_cls):
     df_class = pd.concat([df_cls, df_class], axis=1)
     return df_class
 
-def TcellPanel_analysis(df_cls):
+def TMEpanel_analysis(df_cls, version=2):
+    if version==2:
+        return TMEpanel_analysis_v2(df_cls)
+    elif version==1:
+        return TMEpanel_analysis_v1(df_cls)
+    return df_cls
+
+def TcellPanel_analysis_v2(df_cls):
+    immune_markers = ['PD-1+', 'FOXP3+', 'PD-L1+', 'TIM-3+', 'Ki67+', 'GranzymeB+']
+    panepi_markers = ['Ki67+', 'PD-L1+', 'TIM-3+']
+    markers = ['PD-1+','CD3+','PD-L1+','CD8+','TIM-3+','FOXP3+','GranzymeB+','Ki67+','CD4+','Epithelial+']
+    single_markers = df_cls[markers]
+
+    # ADD RBC class
+    df_cls['RBC+'] = (single_markers['PD-1+'] & ~single_markers['CD3+'] & single_markers['PD-L1+'] & ~single_markers['CD4+'] & ~single_markers['Epithelial+'])
+
+    # Check marker combinations
+    comb_immune = []
+    for i in range(1,len(immune_markers)+1):
+        comb_immune += list(map(list,itertools.combinations(immune_markers, i)))
+    comb_immune_pos = np.zeros((df_cls.shape[0],len(comb_immune)), dtype=bool)
+    for i,ci in enumerate(comb_immune):
+        comb_immune_pos[:,i] = (df_cls[ci].astype(np.uint8).sum(axis=1) == len(ci))
+    # Add fixed markers
+    comb_fixed1 = np.zeros(comb_immune_pos.shape, dtype=bool)
+    for i in range(comb_immune_pos.shape[1]):
+        comb_fixed1[:,i] = single_markers['CD3+'] & single_markers['CD8+'] & comb_immune_pos[:,i] & ~df_cls['RBC+']
+    comb_fixed1_cols = [['CD3+','CD8+'] + x for x in comb_immune]
+    
+    comb_fixed2 = np.zeros(comb_immune_pos.shape, dtype=bool)
+    for i in range(comb_immune_pos.shape[1]):
+        comb_fixed2[:,i] = single_markers['CD3+'] & ~single_markers['CD8+'] & single_markers['CD4+'] & comb_immune_pos[:,i] & ~df_cls['RBC+']
+    comb_fixed2_cols = [['CD3+','CD8-','CD4+'] + x for x in comb_immune]
+    
+    comb_fixed3 = np.zeros(comb_immune_pos.shape, dtype=bool)
+    for i in range(comb_immune_pos.shape[1]):
+        comb_fixed3[:,i] = single_markers['CD3+'] & ~single_markers['CD8+'] & ~single_markers['CD4+'] & comb_immune_pos[:,i] & ~df_cls['RBC+']
+    comb_fixed3_cols = [['CD3+','CD8-','CD4-'] + x for x in comb_immune]
+
+    comb_fixed4 = np.zeros(comb_immune_pos.shape, dtype=bool)
+    for i in range(comb_immune_pos.shape[1]):
+        comb_fixed4[:,i] = ~single_markers['CD3+'] & single_markers['CD4+'] & comb_immune_pos[:,i] & ~df_cls['RBC+']
+    comb_fixed4_cols = [['CD3-','CD4+'] + x for x in comb_immune]
+    
+    # Merge immune classification
+    comb_immune_pos = np.concatenate([comb_fixed1, comb_fixed2, comb_fixed3, comb_fixed4], axis=1)
+    comb_immune = comb_fixed1_cols + comb_fixed2_cols + comb_fixed3_cols + comb_fixed4_cols
+    comb_immune = [''.join(x) for x in comb_immune]
+    df_immune = pd.DataFrame(columns=comb_immune, data=comb_immune_pos, index=df_cls.index)
+
+    # Prepare panepi cols
+    comb_panepi = []
+    for i in range(1,len(panepi_markers)+1):
+        comb_panepi += list(map(list,itertools.combinations(panepi_markers, i)))
+    comb_panepi_pos = np.zeros((df_cls.shape[0],len(comb_panepi)), dtype=bool)
+    for i,cp in enumerate(comb_panepi):
+        comb_panepi_pos[:,i] = (df_cls[cp].astype(np.uint8).sum(axis=1) == len(cp))
+    for i in range(comb_panepi_pos.shape[1]):
+        comb_panepi_pos[:,i] = ~single_markers['CD3+'] & ~single_markers['CD4+'] & single_markers['Epithelial+'] & comb_panepi_pos[:,i] & ~df_cls['RBC+']
+    comb_panepi = [['Epithelial+'] + x for x in comb_panepi]
+    comb_panepi = [''.join(x) for x in comb_panepi]
+    df_panepi = pd.DataFrame(columns=comb_panepi, data=comb_panepi_pos, index=df_cls.index)
+
+    df_merge = pd.concat([df_immune, df_panepi], axis=1)
+    df_merge['Other+'] = (~df_cls['RBC+'] & ~single_markers['CD3+'] & ~single_markers['CD4+'] & ~single_markers['Epithelial+'])
+
+    df_class = pd.concat([df_cls, df_merge], axis=1)
+    return df_class
+
+def TcellPanel_analysis_v1(df_cls):
     immune_markers = ['PD-1+', 'FOXP3+', 'GranzymeB+', 'PD-L1+', 'TIM-3+', 'Ki67+']
     panepi_markers = ['PD-L1+', 'Ki67+', 'TIM-3+']
 
@@ -113,21 +281,21 @@ def TcellPanel_analysis(df_cls):
     comb_immune = []
     for i in range(1,len(immune_markers)+1):
         comb_immune += list(map(list,itertools.combinations(immune_markers, i)))
-    comb_immune_pos = np.zeros((df_cls.shape[0],len(comb_immune)), dtype=np.uint8)
+    comb_immune_pos = np.zeros((df_cls.shape[0],len(comb_immune)), dtype=bool)
     for i,ci in enumerate(comb_immune):
-        comb_immune_pos[:,i] = (df_cls[ci].sum(axis=1) == len(ci)).astype(np.uint8)
+        comb_immune_pos[:,i] = (df_cls[ci].astype(np.uint8).sum(axis=1) == len(ci))
     # Add fixed markers
-    comb_fixed1 = np.zeros(comb_immune_pos.shape, dtype=np.uint8)
+    comb_fixed1 = np.zeros(comb_immune_pos.shape, dtype=bool)
     for i in range(comb_immune_pos.shape[1]):
         comb_fixed1[:,i] = df_cls['CD3+'] & df_cls['CD8+'] & comb_immune_pos[:,i]
     comb_fixed1_cols = [['CD3+','CD8+'] + x for x in comb_immune]
     
-    comb_fixed2 = np.zeros(comb_immune_pos.shape, dtype=np.uint8)
+    comb_fixed2 = np.zeros(comb_immune_pos.shape, dtype=bool)
     for i in range(comb_immune_pos.shape[1]):
         comb_fixed2[:,i] = df_cls['CD3+'] & ~df_cls['CD8+'] & df_cls['CD4+'] & comb_immune_pos[:,i]
     comb_fixed2_cols = [['CD3+','CD8-','CD4+'] + x for x in comb_immune]
     
-    comb_fixed3 = np.zeros(comb_immune_pos.shape, dtype=np.uint8)
+    comb_fixed3 = np.zeros(comb_immune_pos.shape, dtype=bool)
     for i in range(comb_immune_pos.shape[1]):
         comb_fixed3[:,i] = df_cls['CD3+'] & ~df_cls['CD8+'] & ~df_cls['CD4+'] & comb_immune_pos[:,i]
     comb_fixed3_cols = [['CD3+','CD8-','CD4-'] + x for x in comb_immune]
@@ -142,9 +310,9 @@ def TcellPanel_analysis(df_cls):
     comb_panepi = []
     for i in range(1,len(panepi_markers)+1):
         comb_panepi += list(map(list,itertools.combinations(panepi_markers, i)))
-    comb_panepi_pos = np.zeros((df_cls.shape[0],len(comb_panepi)), dtype=np.uint8)
+    comb_panepi_pos = np.zeros((df_cls.shape[0],len(comb_panepi)), dtype=bool)
     for i,cp in enumerate(comb_panepi):
-        comb_panepi_pos[:,i] = (df_cls[cp].sum(axis=1) == len(cp)).astype(np.uint8)
+        comb_panepi_pos[:,i] = (df_cls[cp].astype(np.uint8).sum(axis=1) == len(cp))
     for i in range(comb_panepi_pos.shape[1]):
         comb_panepi_pos[:,i] = ~df_cls['CD3+'] & df_cls['Epithelial+'] & comb_panepi_pos[:,i]
     comb_panepi = [['CD3-','Epithelial+'] + x for x in comb_panepi]
@@ -153,6 +321,13 @@ def TcellPanel_analysis(df_cls):
 
     df_class = pd.concat([df_cls, df_immune, df_panepi], axis=1)
     return df_class
+
+def TcellPanel_analysis(df_cls, version=2):
+    if version==2:
+        return TcellPanel_analysis_v2(df_cls)
+    elif version==1:
+        return TcellPanel_analysis_v1(df_cls)
+    return df_cls
 
 def classify_cells(config):
     rootpath = Path(config['GENERAL']['rootpath'])
@@ -178,25 +353,37 @@ def classify_cells(config):
                 if row['channel'] != 'DAPI' or 'round1' in row['slide']:
                     marker = df_markers.loc[(df_markers['Round']==int(row['slide'][-1]))&(df_markers['Staining']==row['channel']),'Marker'].values[0]
                     posthresh[marker] = row['threshold']
-            df_cls = pre_analysis(df_feat, posthresh, featpat = config['CLASSIFICATION']['pos_threshold'])
+
+            basecols = ['Panel','Slide','ROI','ID','Location_X','Location_Y','Size']
+            df_cls = pre_analysis(df_feat, basecols, posthresh, featpat = config['CLASSIFICATION']['pos_threshold'])
             
             if panel == 'CAFpanel':
-                df_class = CAFpanel_analysis(df_cls)
+                df_class = CAFpanel_analysis(df_cls, version=config['CLASSIFICATION'].getint('version'))
             elif panel == 'TMEpanel':
-                df_class = TMEpanel_analysis(df_cls)
+                df_class = TMEpanel_analysis(df_cls, version=config['CLASSIFICATION'].getint('version'))
             else:
-                df_class = TcellPanel_analysis(df_cls)
+                df_class = TcellPanel_analysis(df_cls, version=config['CLASSIFICATION'].getint('version'))
 
-            df_class.to_csv(classpath / sfpath.name, index=False)
+            # Change type for all other columns except basecols
+            columns = [x for x in df_class.columns if x not in basecols]
+            df_class = pd.concat([df_class[basecols],df_class[columns].astype(np.uint8)], axis=1)
+
+            clspath = sfpath.name
+            if config['CLASSIFICATION'].getint('version') == 2:
+                clspath = clspath.replace('.csv', '_v2.csv')
+            df_class.to_csv(classpath / clspath, index=False)
             # Create aggregates
             df_aggclass = df_class.groupby(['Panel','Slide','ROI']).mean()
             df_aggclass = df_aggclass.reset_index()
             df_aggclass.insert(3,'Cells',df_class.groupby(['Panel','Slide','ROI']).count()['ID'].values)
             df_aggclass = df_aggclass.drop(columns=['ID','Location_X','Location_Y','Size'], axis=1)
-            df_aggclass.to_csv(classpath / (sfpath.name.replace('.csv','_agg.csv')), index=False)
+            aggclspath = sfpath.name.replace('.csv','_agg.csv')
+            if config['CLASSIFICATION'].getint('version') == 2:
+                aggclspath = aggclspath.replace('.csv', '_v2.csv')
+            df_aggclass.to_csv(classpath / aggclspath, index=False)
 
 
-def measure_objects(labelpath, imgpaths, thresholds='', markers='', dpath=''):
+def measure_objects(labelpath, imgpaths, thresholds='', markers='', panel='', dpath=''):
     """
     Measure mean, stdev, median, mad, lower quartile and upper quartile
     """
@@ -266,12 +453,6 @@ def measure_objects(labelpath, imgpaths, thresholds='', markers='', dpath=''):
 
     df = pd.concat(dfs, axis=1)
     roinum = int(re.search('_roi(\d+).',labelpath.name).group(1))
-    panel = 'CAFpanel'
-    if 'TMEpanel' in labelpath.name:
-        panel = 'TMEpanel'
-    elif 'TcellPanel' in labelpath.name:
-        panel = 'TcellPanel'
-    
     df.insert(0,'ROI',roinum)
     df.insert(0,'Slide',labelpath.name.split(panel)[0][:-1])
     df.insert(0,'Panel',panel)
@@ -322,7 +503,7 @@ def extract_features(config):
                 #df_feat = measure_objects(rpath, chpaths, df_slide['threshold'].values, markers, featpath)
 
             # Launch parallel processing pool
-            measure_func = functools.partial(measure_objects, thresholds=df_slide['threshold'].values, markers=markers, dpath=slmaskpath)
+            measure_func = functools.partial(measure_objects, thresholds=df_slide['threshold'].values, markers=markers, panel=panel, dpath=slmaskpath)
             pool = multiprocessing.Pool(processes=config['GENERAL'].getint('max_processes'))
             dfs = tqdm(pool.starmap(measure_func, rois))
             df = pd.concat(dfs, axis=0, ignore_index=True)
@@ -507,6 +688,7 @@ def auto_threshold(config):
 
 def create_roi_thumbnails(roi, regpath=None, thumbpath=None, df_thresh=None, downscale=4):
     df_rt = df_thresh[df_thresh['slide']=='_'.join(roi.name.split('_')[:4])]
+    #df_rt = df_thresh[df_thresh['slide']=='_'.join(roi.name.split('_')[:3])]
     # Find rest roi images
     roiname = roi.name
     roundx_chs = regpath.rglob(roiname.replace('round1','round*').replace('DAPI','*'))
@@ -529,6 +711,7 @@ def create_roi_thumbnails(roi, regpath=None, thumbpath=None, df_thresh=None, dow
 
         parts = ch_path.name.split('_')
         mpath = thumbpath / '_'.join(parts[:4])
+        #mpath = thumbpath / '_'.join(parts[:3])
         mname = ch_path.name
         mname = mname.replace('.tif','.png')
         imageio.imwrite(mpath / mname, rgba)
