@@ -101,12 +101,16 @@ def classify_TMEpanel_marker_multi_v2(row):
         return 'RBC+'
     elif row['CD20+'] and row['CD45+']: # B-cell
         return 'CD20+CD45+'
-    elif row['CD3+'] and not row['CD56+'] and row['CD45+']: # T-cell
-        return 'CD3+CD56-CD45+'
     elif row['CD68+'] and row['HLA-DR+'] and row['CD45+']: # Macrophage HLA+
         return 'CD68+HLA-DR+CD45+'
     elif row['CD68+'] and not row['HLA-DR+'] and row['CD45+']: # Macrophage HLA-
         return 'CD68+HLA-DR-CD45+'
+    elif row['CD3+'] and not row['CD56+'] and row['CD45+']: # T-cell
+        return 'CD3+CD56-CD45+'
+    elif row['CD3+'] and row['CD56+'] and row['CD45+']: # NKT-cell
+        return 'CD3+CD56+CD45+'
+    elif row['CD56+'] and not row['CD3+'] and row['CD45+']: # NK cell
+        return 'CD3-CD56+CD45+'
     elif row['CD11b+'] and row['CD45+'] and row['HLA-DR+']: # myeloid1 (non-macrophage)
         return 'CD11b+HLA-DR+CD45+'
     elif row['CD11b+'] and row['CD45+'] and not row['HLA-DR+']: # myeloid2 (non-macrophage)
@@ -123,10 +127,6 @@ def classify_TMEpanel_marker_multi_v2(row):
         return 'Epithelial+HLA-DR+CD56-CD45-CD3-CD20-'
     elif row['Epithelial+'] and not row['HLA-DR+'] and not row['CD56+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
         return 'Epithelial+HLA-DR-CD56-CD45-CD3-CD20-'
-    elif row['CD3+'] and row['CD56+'] and row['CD45+']: # NKT-cell
-        return 'CD3+CD56+CD45+'
-    elif row['CD56+'] and not row['CD3+'] and row['CD45+']: # NK cell
-        return 'CD3-CD56+CD45+'
     elif not row['Epithelial+'] and row['CD31+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
         return 'Epithelial-CD31+CD45-CD3-CD20-'
     elif not row['Epithelial+'] and row['PDGFRbeta+'] and row['CD56+'] and row['HLA-DR+'] and not row['CD45+'] and not row['CD3+'] and not row['CD20+']:
@@ -219,6 +219,14 @@ def TcellPanel_analysis_v2(df_cls):
 
     # ADD RBC class
     df_cls['RBC+'] = (single_markers['PD-1+'] & ~single_markers['CD3+'] & single_markers['PD-L1+'] & ~single_markers['CD4+'] & ~single_markers['Epithelial+'])
+
+    # Add immune main categories
+    df_cls['CD3+CD8-'] = (single_markers['CD3+'] & ~single_markers['CD8+'])
+    df_cls['CD3+CD8+'] = (single_markers['CD3+'] & single_markers['CD8+'])
+    df_cls['CD3+CD8-CD4+'] = (single_markers['CD3+'] & ~single_markers['CD8+'] & single_markers['CD4+'])
+    df_cls['CD3+CD8-CD4-'] = (single_markers['CD3+'] & ~single_markers['CD8+'] & ~single_markers['CD4+'])
+    df_cls['CD3+CD8+CD4+'] = (single_markers['CD3+'] & single_markers['CD8+'] & single_markers['CD4+'])
+    df_cls['CD3+CD8+CD4-'] = (single_markers['CD3+'] & single_markers['CD8+'] & ~single_markers['CD4+'])
 
     # Check marker combinations
     comb_immune = []
